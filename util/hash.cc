@@ -1,7 +1,9 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-
+/**
+ * hash2024年3月24日
+*/
 #include "util/hash.h"
 
 #include <cstring>
@@ -18,7 +20,9 @@
 #endif
 
 namespace leveldb {
-
+/**
+ * 对长度n的data哈希？
+*/
 uint32_t Hash(const char* data, size_t n, uint32_t seed) {
   // Similar to murmur hash
   const uint32_t m = 0xc6a4a793;

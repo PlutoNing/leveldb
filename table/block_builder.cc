@@ -57,7 +57,9 @@ size_t BlockBuilder::CurrentSizeEstimate() const {
           restarts_.size() * sizeof(uint32_t) +  // Restart array
           sizeof(uint32_t));                     // Restart array length
 }
-
+/**
+ * BlockBuilder的Finish()函数将data block的数据序列化成一个Slice。
+ */
 Slice BlockBuilder::Finish() {
   // Append restart array
   for (size_t i = 0; i < restarts_.size(); i++) {

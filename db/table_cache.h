@@ -18,7 +18,13 @@
 namespace leveldb {
 
 class Env;
-
+/**
+ * ableCache缓存的是Table对象，每个DB一个，
+ * 它内部使用一个LRUCache缓存所有的table对象，实际上其内容是文件编号{file
+ * number,
+ * TableAndFile}*。TableAndFile是一个拥有
+ * 2个变量的结构体：RandomAccessFile和Table；
+ */
 class TableCache {
  public:
   TableCache(const std::string& dbname, const Options& options, int entries);
@@ -50,10 +56,10 @@ class TableCache {
  private:
   Status FindTable(uint64_t file_number, uint64_t file_size, Cache::Handle**);
 
-  Env* const env_;
+  Env* const env_;  /// 用来操作文件
   const std::string dbname_;
   const Options& options_;
-  Cache* cache_;
+  Cache* cache_;  //lru cache
 };
 
 }  // namespace leveldb

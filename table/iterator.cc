@@ -22,7 +22,9 @@ Iterator::~Iterator() {
     }
   }
 }
-
+/**
+ * 把fund(arg1,arg2)加入一条清理链表头部？
+*/
 void Iterator::RegisterCleanup(CleanupFunction func, void* arg1, void* arg2) {
   assert(func != nullptr);
   CleanupNode* node;

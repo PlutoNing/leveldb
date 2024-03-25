@@ -14,7 +14,9 @@
 // policy is provided.  Clients may use their own implementations if
 // they want something more sophisticated (like scan-resistance, a
 // custom eviction policy, variable cache sizing, etc.)
-
+/**
+ *Least Recently Used Cache，即最近最少使用缓存
+ */
 #ifndef STORAGE_LEVELDB_INCLUDE_CACHE_H_
 #define STORAGE_LEVELDB_INCLUDE_CACHE_H_
 
@@ -41,7 +43,10 @@ class LEVELDB_EXPORT Cache {
   // Destroys all existing entries by calling the "deleter"
   // function that was passed to the constructor.
   virtual ~Cache();
-
+  /**
+   * Handle 仅作为指针类型使用，实际上使用 void * 也并无区别，Handle
+   * 增加语意而已
+   */
   // Opaque handle to an entry stored in the cache.
   struct Handle {};
 

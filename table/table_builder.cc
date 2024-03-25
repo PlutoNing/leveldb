@@ -10,6 +10,7 @@
 #include "leveldb/env.h"
 #include "leveldb/filter_policy.h"
 #include "leveldb/options.h"
+
 #include "table/block_builder.h"
 #include "table/filter_block.h"
 #include "table/format.h"
@@ -137,7 +138,9 @@ void TableBuilder::Flush() {
     r->filter_block->StartBlock(r->offset);
   }
 }
-
+/*
+写入blocks，做些预处理工作，序列化要写入的data block，根据需要压缩数据
+*/
 void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
   // File format contains a sequence of blocks where each block has:
   //    block_data: uint8[n]
@@ -184,26 +187,36 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
       break;
     }
   }
+  /*
+  将data内容写入到文件，并重置block成初始化状态，清空compressedoutput。
+  */
   WriteRawBlock(block_contents, type, handle);
   r->compressed_output.clear();
   block->Reset();
 }
-
+/**
+ *
+ */
 void TableBuilder::WriteRawBlock(const Slice& block_contents,
                                  CompressionType type, BlockHandle* handle) {
   Rep* r = rep_;
   handle->set_offset(r->offset);
   handle->set_size(block_contents.size());
+  //// 为index设置data block的handle信息
+  // handle指向头和尾
   r->status = r->file->Append(block_contents);
+  // 写入data block
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
     trailer[0] = type;
     uint32_t crc = crc32c::Value(block_contents.data(), block_contents.size());
     crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
+    //// 写入1byte的type和4bytes的crc32
     r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
     if (r->status.ok()) {
       r->offset += block_contents.size() + kBlockTrailerSize;
+      // // 写入成功更新offset-下一个data block的写入偏移
     }
   }
 }
@@ -215,6 +228,11 @@ Status TableBuilder::Finish() {
   Flush();
   assert(!r->closed);
   r->closed = true;
+  /**
+   * 首先调用Flush，写入最后的一块data
+   * block，然后设置关闭标志closed=true。
+   * 表明该sstable已经关闭，不能再添加k/v对。
+   */
 
   BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;
 
@@ -223,8 +241,18 @@ Status TableBuilder::Finish() {
     WriteRawBlock(r->filter_block->Finish(), kNoCompression,
                   &filter_block_handle);
   }
-
+  /**
+   * 写入filter block到文件中。
+   */
   // Write metaindex block
+  /**
+   * S3 写入meta index block到文件中。
+   */
+  /**
+   * 如果filterblock不为NULL，则加入从"filter.Name"到filter
+   * data位置的映射。通过meta index
+   * block，可以根据filter名字快速定位到filter的数据区。
+   */
   if (ok()) {
     BlockBuilder meta_index_block(&r->options);
     if (r->filter_block != nullptr) {
@@ -241,6 +269,11 @@ Status TableBuilder::Finish() {
   }
 
   // Write index block
+  /**
+   * 写入index block，如果成功Flush过data block，
+   * 那么需要为最后一块data
+   * block设置index block，并加入到index block中。
+   */
   if (ok()) {
     if (r->pending_index_entry) {
       r->options.comparator->FindShortSuccessor(&r->last_key);
@@ -253,6 +286,11 @@ Status TableBuilder::Finish() {
   }
 
   // Write footer
+  /**
+   *Footer，文件的最后，大小固定
+成员metaindex_handle指出了meta index block的起始位置和大小；
+成员index_handle指出了index block的起始地址和大小；
+   */
   if (ok()) {
     Footer footer;
     footer.set_metaindex_handle(metaindex_block_handle);

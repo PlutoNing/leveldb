@@ -20,7 +20,7 @@
 #include "leveldb/status.h"
 
 namespace leveldb {
-
+//迭代器
 class LEVELDB_EXPORT Iterator {
  public:
   Iterator();

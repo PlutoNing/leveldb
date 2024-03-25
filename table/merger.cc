@@ -9,9 +9,24 @@
 #include "table/iterator_wrapper.h"
 
 namespace leveldb {
-
+/**
+ * merging itr
+*/
 namespace {
 class MergingIterator : public Iterator {
+  /**
+   * MergingIterator是一个合并迭代器，它内部使用了一组自Iterator，
+   * 保存在其成员数组children_中。如上面的函数NewInternalIterator，
+   * 包括memtable，immutable
+   * memtable，以及各sstable文件；它所做的就是根据调用者指定的key和
+   * sequence，从这些Iterator中找到合适的记录。
+   * 在分析其Iterator接口之前，先来看看两个辅助函数FindSmallest和
+   * FindLargest。FindSmallest从0开始向后遍历内部Iterator数组，找
+   * 到key最小的Iterator，并设置到current_；FindLargest从最后一个
+   * 向前遍历内部Iterator数组，找到key最大的Iterator，并设置到current_；
+   * MergingIterator还定义了两个移动方向：kForward，向前移动；kReverse，
+   * 向后移动。
+   */
  public:
   MergingIterator(const Comparator* comparator, Iterator** children, int n)
       : comparator_(comparator),
@@ -116,7 +131,9 @@ class MergingIterator : public Iterator {
     assert(Valid());
     return current_->value();
   }
-
+/**
+ * 要全部ok才ok
+*/
   Status status() const override {
     Status status;
     for (int i = 0; i < n_; i++) {
@@ -178,11 +195,13 @@ void MergingIterator::FindLargest() {
 
 Iterator* NewMergingIterator(const Comparator* comparator, Iterator** children,
                              int n) {
+
   assert(n >= 0);
   if (n == 0) {
     return NewEmptyIterator();
   } else if (n == 1) {
     return children[0];
+    //上面两分支也说明了，0or1个不需要合并，
   } else {
     return new MergingIterator(comparator, children, n);
   }

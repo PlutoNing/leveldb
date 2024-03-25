@@ -9,7 +9,9 @@
 
 #include "leveldb/export.h"
 #include "leveldb/iterator.h"
-
+/**
+ * 
+*/
 namespace leveldb {
 
 class Block;
@@ -37,6 +39,10 @@ class LEVELDB_EXPORT Table {
   // for the duration of the returned table's lifetime.
   //
   // *file must remain live while this Table is in use.
+  /**
+   * 是Table类的一个静态函数，如果操作成功，指针*table指向新打开的表，否则返回错误。
+要打开的文件和大小分别由参数file和file_size指定；option是一些选项；
+  */
   static Status Open(const Options& options, RandomAccessFile* file,
                      uint64_t file_size, Table** table);
 

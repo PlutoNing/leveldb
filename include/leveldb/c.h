@@ -36,7 +36,9 @@
 
   (5) All of the pointer arguments must be non-NULL.
 */
-
+/**
+ * 除了DB类， leveldb还导出了C语言风格的接口
+ */
 #ifndef STORAGE_LEVELDB_INCLUDE_C_H_
 #define STORAGE_LEVELDB_INCLUDE_C_H_
 

@@ -65,7 +65,9 @@ Status Footer::DecodeFrom(Slice* input) {
   }
   return result;
 }
-
+/**
+ * 读取block
+*/
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result) {
   result->data = Slice();
@@ -78,6 +80,7 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
   char* buf = new char[n + kBlockTrailerSize];
   Slice contents;
   Status s = file->Read(handle.offset(), n + kBlockTrailerSize, &contents, buf);
+  //根据handle偏移量和大小读取
   if (!s.ok()) {
     delete[] buf;
     return s;
@@ -98,7 +101,11 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
       return s;
     }
   }
+  //校验crc
 
+/**
+ * 下面是根据压缩算法解压
+*/
   switch (data[n]) {
     case kNoCompression:
       if (data != buf) {

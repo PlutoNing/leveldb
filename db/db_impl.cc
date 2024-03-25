@@ -4,14 +4,6 @@
 
 #include "db/db_impl.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "db/builder.h"
 #include "db/db_iter.h"
 #include "db/dbformat.h"
@@ -22,11 +14,20 @@
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
+
 #include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
@@ -148,11 +149,21 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
       manual_compaction_(nullptr),
       versions_(new VersionSet(dbname_, &options_, table_cache_,
                                &internal_comparator_)) {}
-
+/**
+ * dbimpl析构
+ */
 DBImpl::~DBImpl() {
+  /**
+   *  S1 等待后台compaction任务结束
+   * S2 释放db文件锁，/lock文件
+   * 删除VersionSet对象，并释放MemTable对象
+   * 删除log相关以及TableCache对象
+   * 删除options的block_cache以及info_log对象
+   */
   // Wait for background work to finish.
   mutex_.Lock();
   shutting_down_.store(true, std::memory_order_release);
+  // 发布 要求前面的读写不会跑到后面
   while (background_compaction_scheduled_) {
     background_work_finished_signal_.Wait();
   }
@@ -179,12 +190,14 @@ DBImpl::~DBImpl() {
 }
 
 Status DBImpl::NewDB() {
+  //// S1首先生产DB元信息，设置comparator名，以及log文件编号、文件编号，以及seq
+  /// no。
   VersionEdit new_db;
   new_db.SetComparatorName(user_comparator()->Name());
   new_db.SetLogNumber(0);
   new_db.SetNextFile(2);
   new_db.SetLastSequence(0);
-
+  // S2 生产MANIFEST文件，将db元信息写入MANIFEST文件。
   const std::string manifest = DescriptorFileName(dbname_, 1);
   WritableFile* file;
   Status s = env_->NewWritableFile(manifest, &file);
@@ -288,7 +301,13 @@ void DBImpl::RemoveObsoleteFiles() {
   }
   mutex_.Lock();
 }
-
+/**
+ * 如果调用成功则设置VersionEdit。Recover的基本功能是：首先是处理
+ * 创建flag，比如存在就返回失败等等；然后是尝试从已存在的sstable文
+ * 件恢复db；最后如果发现有大于原信息记录的log编号的log文件，则需要
+ * 回放log，更新db数据。回放期间db可能会dump新的level
+ * 0文件，因此需要把db元信息的变动记录到edit中返回。函数逻辑如下：
+ */
 Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   mutex_.AssertHeld();
 
@@ -301,8 +320,16 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   if (!s.ok()) {
     return s;
   }
+  // 创建目录，目录以db name命名，忽略任何创建错误，然后尝试获取db
+  // name/LOCK文件锁，失败则返回
 
   if (!env_->FileExists(CurrentFileName(dbname_))) {
+    /**
+     * S2 根据CURRENT文件是否存在，以及option参数执行检查。
+     * 如果文件不存在**&create_is_missing=true**，
+     * 则调用函数NewDB()创建；否则报错。
+     * 如果文件存在& error_if_exists=true，则报错。
+     */
     if (options_.create_if_missing) {
       Log(options_.info_log, "Creating DB %s since it was missing.",
           dbname_.c_str());
@@ -322,9 +349,21 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   }
 
   s = versions_->Recover(save_manifest);
+  /*
+  调用VersionSet的**Recover()**函数，就是从
+  文件中恢复数据。如果出错则打开失败，成功则向下执行。
+  */
   if (!s.ok()) {
     return s;
   }
+
+  /**
+   * 下面的阶段
+   * 尝试从所有比manifest文件中记录的log要新的log文件中恢复
+   * （前一个版本可能会添加新的log文件，却没有记录在manifest中）
+   * 。另外，函数PrevLogNumber()已经不再用了，仅为了兼容老版本。
+   */
+
   SequenceNumber max_sequence(0);
 
   // Recover from all newer log files than the ones named in the
@@ -334,6 +373,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   // Note that PrevLogNumber() is no longer used, but we pay
   // attention to it in case we are recovering a database
   // produced by an older version of leveldb.
+  // 这里先找出所有满足条件的log文件：比manifest文件记录的log编号更新。
   const uint64_t min_log = versions_->LogNumber();
   const uint64_t prev_log = versions_->PrevLogNumber();
   std::vector<std::string> filenames;
@@ -361,8 +401,12 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   }
 
   // Recover in the order in which the logs were generated
+  // 找到log文件后，首先排序，保证按照生成顺序，依次回放log。并把DB元
+  // 信息的变动（sstable文件的变动）追加到edit中返回。
   std::sort(logs.begin(), logs.end());
   for (size_t i = 0; i < logs.size(); i++) {
+    // 这个时候logs里存着从文件夹里加载的version里的全部有效的log了
+    // 按序恢复就行
     s = RecoverLogFile(logs[i], (i == logs.size() - 1), save_manifest, edit,
                        &max_sequence);
     if (!s.ok()) {
@@ -372,6 +416,8 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
     // The previous incarnation may not have written any MANIFEST
     // records after allocating this log number.  So we manually
     // update the file number allocation counter in VersionSet.
+    // // 前一版可能在生成该log编号后没有记录在MANIFEST中，
+    // 所以这里我们手动更新VersionSet中的文件编号计数器
     versions_->MarkFileNumberUsed(logs[i]);
   }
 
@@ -381,7 +427,14 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
 
   return Status::OK();
 }
-
+/**
+ * 参数说明：log_number是指定的log文件编号
+ * @edit记录db元信息的变化——sstable文件变动 max_sequence
+ * 返回max{log记录的最大序号, *max_sequence}
+ * 该函数打开指定的log文件，回放日志。期间可能会执行compaction，生产新的level
+ * 0sstable文件，记录文件变动到edit中。
+ * 它声明了一个局部类LogReporter以打印错误日志，没什么好说的，下面来看代码逻辑。
+ */
 Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
                               bool* save_manifest, VersionEdit* edit,
                               SequenceNumber* max_sequence) {
@@ -420,6 +473,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   // to be skipped instead of propagating bad information (like overly
   // large sequence numbers).
   log::Reader reader(file, &reporter, true /*checksum*/, 0 /*initial_offset*/);
+  // S2 根据log文件句柄file创建log::Reader，准备读取log。
   Log(options_.info_log, "Recovering log #%llu",
       (unsigned long long)log_number);
 
@@ -456,6 +510,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       compactions++;
       *save_manifest = true;
       status = WriteLevel0Table(mem, edit, nullptr);
+      // // 如果mem的内存超过设置值，则执行compaction，如果compaction出错，
       mem->Unref();
       mem = nullptr;
       if (!status.ok()) {
@@ -489,7 +544,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       }
     }
   }
-
+  // S4 扫尾工作，如果mem != NULL，说明还需要dump到新的sstable文件中。
   if (mem != nullptr) {
     // mem did not get reused; compact it.
     if (status.ok()) {
@@ -1077,6 +1132,10 @@ static void CleanupIteratorState(void* arg1, void* arg2) {
 Iterator* DBImpl::NewInternalIterator(const ReadOptions& options,
                                       SequenceNumber* latest_snapshot,
                                       uint32_t* seed) {
+  /**
+   * 函数NewInternalIterator有一些处理逻辑，就是收集所有能用到的iterator，生产一个Merging
+   * Iterator。这包括MemTable，Immutable MemTable，以及各sstable。
+   */
   mutex_.Lock();
   *latest_snapshot = versions_->LastSequence();
 
@@ -1095,7 +1154,9 @@ Iterator* DBImpl::NewInternalIterator(const ReadOptions& options,
 
   IterState* cleanup = new IterState(&mutex_, mem_, imm_, versions_->current());
   internal_iter->RegisterCleanup(CleanupIteratorState, cleanup, nullptr);
-
+  /**
+   * 这里为什么需要清理？是因为迭代器固化了一些资源吗？
+   */
   *seed = ++seed_;
   mutex_.Unlock();
   return internal_iter;
@@ -1111,7 +1172,7 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
   MutexLock l(&mutex_);
   return versions_->MaxNextLevelOverlappingBytes();
 }
-
+// 读取
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
   Status s;
@@ -1158,7 +1219,10 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
   current->Unref();
   return s;
 }
-
+/**
+ *通过该函数生产了一个Iterator*对象，调用这就可以基于该对象遍历db内容了。
+ *函数很简单，调用两个函数创建了一个二级Iterator。
+ */
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
   SequenceNumber latest_snapshot;
   uint32_t seed;
@@ -1493,7 +1557,9 @@ Status DB::Delete(const WriteOptions& opt, const Slice& key) {
 }
 
 DB::~DB() = default;
-
+/**
+ * 打开文件
+ */
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   *dbptr = nullptr;
 
@@ -1505,6 +1571,10 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   Status s = impl->Recover(&edit, &save_manifest);
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
+    /**
+     * 如果DBImpl::Recover()返回成功，就执行VersionSet::LogAndApply()**
+     * 应用VersionEdit，并保存当前的DB信息到新的MANIFEST文件中
+     */
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     WritableFile* lfile;
     s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
@@ -1517,13 +1587,17 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
       impl->mem_ = new MemTable(impl->internal_comparator_);
       impl->mem_->Ref();
     }
+    // 新建logfile成功
   }
   if (s.ok() && save_manifest) {
+    // save_manifest 是啥？
     edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
     edit.SetLogNumber(impl->logfile_number_);
     s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
+    // log和reply
   }
   if (s.ok()) {
+    // 如果VersionSet::LogAndApply返回成功，则删除过期文件，检查是否需要执行compaction，最终返回创建的DBImpl对象。
     impl->RemoveObsoleteFiles();
     impl->MaybeScheduleCompaction();
   }
@@ -1538,8 +1612,19 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
 }
 
 Snapshot::~Snapshot() = default;
-
+/**
+ * 就是删除文件
+ */
 Status DestroyDB(const std::string& dbname, const Options& options) {
+  /**
+   * 该函数会删除掉db的数据内容，要谨慎使用。函数逻辑为： S1
+   * 获取dbname目录的文件列表到filenames中，如果为空则直接返回，否则进入S2。 S2
+   * 锁文件/lock，如果锁成功就执行S3 S3
+   * 遍历filenames文件列表，过滤掉lock文件，依次调用DeleteFile删除。 S4
+   * 释放lock文件，并删除之，然后删除文件夹。
+   * Destory就执行完了，如果删除文件出现错误，记录之，依然继续删除下一个。最后返回错误代码。
+   * 看来这一章很短小。DB的打开关闭分析完毕。
+   */
   Env* env = options.env;
   std::vector<std::string> filenames;
   Status result = env->GetChildren(dbname, &filenames);
@@ -1555,10 +1640,12 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
     uint64_t number;
     FileType type;
     for (size_t i = 0; i < filenames.size(); i++) {
-      if (ParseFileName(filenames[i], &number, &type) &&
-          type != kDBLockFile) {  // Lock file will be deleted at end
+      if (ParseFileName(filenames[i], &number, &type) && type != kDBLockFile) {
+        // Lock file will be deleted at end
         Status del = env->RemoveFile(dbname + "/" + filenames[i]);
         if (result.ok() && !del.ok()) {
+          // 删除除了lock之外的leveldb文件吗？
+          // 话说levedldb使用哪些文件
           result = del;
         }
       }

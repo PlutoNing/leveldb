@@ -15,12 +15,12 @@
 #ifndef STORAGE_LEVELDB_DB_VERSION_SET_H_
 #define STORAGE_LEVELDB_DB_VERSION_SET_H_
 
+#include "db/dbformat.h"
+#include "db/version_edit.h"
 #include <map>
 #include <set>
 #include <vector>
 
-#include "db/dbformat.h"
-#include "db/version_edit.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
 
@@ -64,9 +64,7 @@ class Version {
     int seek_file_level;
   };
 
-  // Append to *iters a sequence of iterators that will
-  // yield the contents of this Version when merged together.
-  // REQUIRES: This version has been saved (see VersionSet::SaveTo)
+
   void AddIterators(const ReadOptions&, std::vector<Iterator*>* iters);
 
   // Lookup the value for key.  If found, store it in *val and
@@ -108,7 +106,7 @@ class Version {
   // result that covers the range [smallest_user_key,largest_user_key].
   int PickLevelForMemTableOutput(const Slice& smallest_user_key,
                                  const Slice& largest_user_key);
-
+  // 指定level的sstable个数
   int NumFiles(int level) const { return files_[level].size(); }
 
   // Return a human readable string that describes this version's contents.
@@ -144,26 +142,33 @@ class Version {
   // REQUIRES: user portion of internal_key == user_key.
   void ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
                           bool (*func)(void*, int, FileMetaData*));
-
+  /**
+   * Version通过Version*
+   * prev和*next指针构成了一个Version双向循环链表，表头指针则在VersionSet中（初始都指向自己）。
+   */
   VersionSet* vset_;  // VersionSet to which this Version belongs
   Version* next_;     // Next version in linked list
   Version* prev_;     // Previous version in linked list
   int refs_;          // Number of live refs to this version
 
-  // List of files per level
+  // sstable文件列表
   std::vector<FileMetaData*> files_[config::kNumLevels];
 
-  // Next file to compact based on seek stats.
+  // 下一个要compact的文件
   FileMetaData* file_to_compact_;
+  // 下一个应该compact的level
   int file_to_compact_level_;
 
-  // Level that should be compacted next and its compaction score.
-  // Score < 1 means compaction is not strictly needed.  These fields
-  // are initialized by Finalize().
+  // 下一个应该compact的level和compaction分数.分数 < 1 说明compaction并不紧迫.
+  // 这些字段在Finalize()中初始化
+
   double compaction_score_;
+  //// 下一个应该compact的level
   int compaction_level_;
 };
-
+/**
+ * 除了通过Version管理所有的sstable文件外，还关心manifest文件信息，以及控制log文件等编号
+ */
 class VersionSet {
  public:
   VersionSet(const std::string& dbname, const Options* options,
@@ -292,26 +297,29 @@ class VersionSet {
   Status WriteSnapshot(log::Writer* log);
 
   void AppendVersion(Version* v);
-
-  Env* const env_;
+  //=== 第一组，直接来自于DBImple，构造函数传入
+  Env* const env_;  // 操作系统封装
   const std::string dbname_;
   const Options* const options_;
   TableCache* const table_cache_;
   const InternalKeyComparator icmp_;
-  uint64_t next_file_number_;
-  uint64_t manifest_file_number_;
+  //=== 第二组，db元信息相关//=== 第二组，db元信息相关
+  uint64_t next_file_number_;      // log文件编号
+  uint64_t manifest_file_number_;  // manifest文件编号
   uint64_t last_sequence_;
-  uint64_t log_number_;
+  uint64_t log_number_;       // log编号
   uint64_t prev_log_number_;  // 0 or backing store for memtable being compacted
 
+  //=== 第三组，menifest文件相关
   // Opened lazily
   WritableFile* descriptor_file_;
   log::Writer* descriptor_log_;
-  Version dummy_versions_;  // Head of circular doubly-linked list of versions.
+  Version dummy_versions_;  // versions双向链表head.
   Version* current_;        // == dummy_versions_.prev_
 
   // Per-level key at which the next compaction at that level should start.
   // Either an empty string, or a valid InternalKey.
+  // level下一次compaction的开始key，空字符串或者合法的InternalKey
   std::string compact_pointer_[config::kNumLevels];
 };
 

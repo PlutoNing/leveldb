@@ -24,7 +24,7 @@ class BloomFilterPolicy : public FilterPolicy {
   }
 
   const char* Name() const override { return "leveldb.BuiltinBloomFilter2"; }
-
+//在dst上产生bloom
   void CreateFilter(const Slice* keys, int n, std::string* dst) const override {
     // Compute bloom filter size (in both bits and bytes)
     size_t bits = n * bits_per_key_;
@@ -52,7 +52,7 @@ class BloomFilterPolicy : public FilterPolicy {
       }
     }
   }
-
+  // 在指定的filer中查找key是否存在 
   bool KeyMayMatch(const Slice& key, const Slice& bloom_filter) const override {
     const size_t len = bloom_filter.size();
     if (len < 2) return false;

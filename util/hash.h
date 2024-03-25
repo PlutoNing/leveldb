@@ -3,7 +3,9 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 //
 // Simple hash function used for internal data structures
-
+/**
+ * hash
+*/
 #ifndef STORAGE_LEVELDB_UTIL_HASH_H_
 #define STORAGE_LEVELDB_UTIL_HASH_H_
 
