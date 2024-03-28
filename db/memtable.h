@@ -78,8 +78,8 @@ class MemTable {
 
   KeyComparator comparator_;
   int refs_;
-  Arena arena_;
-  Table table_;
+  Arena arena_;  //为啥持有的是arena
+  Table table_;  //skiplist
 };
 
 }  // namespace leveldb

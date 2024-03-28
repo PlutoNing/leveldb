@@ -556,9 +556,13 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 
   return status;
 }
-
+// 将Immutable MemTable转储为SSTable
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
+  /**
+   * 其获取了需要转储的MemTable的迭代器，并传给BuildTable方法。
+   * BuildTable方法会通过TableBuilder来构造SSTable文件然后写入
+   */
   mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
@@ -600,8 +604,17 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   stats_[level].Add(stats);
   return s;
 }
-
+// Minor Compaction主要通过DBImpl::CompactionMemTable方法实现
 void DBImpl::CompactMemTable() {
+  /**
+   * CompactionMemTable方法首先调用DBImpl::WriteLevel0Table方法将Immutable
+   * MemTable转储为SSTable，由于该方法需要使用当前的Version信息，因此在调用
+   * 前后增减了当前Version的引用计数以避免其被回收。接着，通过VersionSet::LogAndApply
+   * 方法将增量的版本更新VersionEdit写入Manifest（其中prev
+   * log
+   * number已被弃用，不需要再关注）。如果上述操作都成功完成，则可以释放对Immutable
+   * MemTable的引用，并通过RemoveObsoleteFiles方法回收不再需要保留的文件。
+   */
   mutex_.AssertHeld();
   assert(imm_ != nullptr);
 
@@ -633,8 +646,18 @@ void DBImpl::CompactMemTable() {
     RecordBackgroundError(s);
   }
 }
-
+/**
+ * 触发手动compact
+ */
 void DBImpl::CompactRange(const Slice* begin, const Slice* end) {
+  /**
+   * 其所知Compaction的范围信息最少，只知道需要Compact的起始与终止key，
+   * 甚至不知道发生Compaction的level。这也意味着，需要Compact的key范围，
+   * 既可能在MemTable或Immutable Table中，也可能在不同level的SSTable中，
+   * 甚至二者都有。因此，在Compact的时候需要考虑所有情形。
+LevelDB为了确保用户给出的key范围都能够被Compact，其首先强制触发Minor
+Compaction，然后按照给定的key范围进行Major Compaction。
+  */
   int max_level_with_files = 1;
   {
     MutexLock l(&mutex_);
@@ -734,7 +757,9 @@ void DBImpl::MaybeScheduleCompaction() {
 void DBImpl::BGWork(void* db) {
   reinterpret_cast<DBImpl*>(db)->BackgroundCall();
 }
-
+/**
+ *
+ */
 void DBImpl::BackgroundCall() {
   MutexLock l(&mutex_);
   assert(background_compaction_scheduled_);
@@ -743,6 +768,9 @@ void DBImpl::BackgroundCall() {
   } else if (!bg_error_.ok()) {
     // No more background work after a background error.
   } else {
+    /**
+     * 调用DBImpl::BackgroundCompaction方法正式开始Compaction执行
+     */
     BackgroundCompaction();
   }
 
@@ -750,13 +778,23 @@ void DBImpl::BackgroundCall() {
 
   // Previous compaction may have produced too many files in a level,
   // so reschedule another compaction if needed.
+  /**
+   * 最后，在本次Compaction执行结束后，会再次调用
+   * MaybeScheduleCompaction方法以免本次Compaction导致某一层文件过大超出限制（这也是Size
+   * Compaction的触发代码，上文曾介绍过这段代码）。
+   */
   MaybeScheduleCompaction();
   background_work_finished_signal_.SignalAll();
 }
 
 void DBImpl::BackgroundCompaction() {
   mutex_.AssertHeld();
-
+  /**
+   * 首先通过断言的方式确保当前持有锁，
+   * 然后按照优先级来执行Compaction。首先其判断imm_是否存在，
+   * 如果存在则通过DBImpl::CompactionMemTable方法来执行Minor
+   * Comapction并返回。
+   */
   if (imm_ != nullptr) {
     CompactMemTable();
     return;
@@ -780,11 +818,27 @@ void DBImpl::BackgroundCompaction() {
   } else {
     c = versions_->PickCompaction();
   }
+  /**
+   * 接下来，BackgroundCompaction方法会根据上一步中准备好的记录了Major
+  Compaction所需数据的Compaction类型的实例c，执行相应的方法：
 
+  如果c为空，则无需执行，直接跳过这一步。
+  如果当前任务不是Manual
+  Compaction，则判断Compaction任务c是否只需要SSTable从一层移动到下一层即可（被称为“trivial
+  move”），即既不需要合并SSTable也不需要拆分SSTable。Manual
+  Compaction不使用“trivial move”，以为用户提供显式回收不再需要的文件的接口。
+  否则，执行Compaction操作，依次调用DoCompactionWork、CleanupCompaction、RemoveObsoleteFiles。
+  */
   Status status;
   if (c == nullptr) {
     // Nothing to do
   } else if (!is_manual && c->IsTrivialMove()) {
+    /**
+     * 会通过Compaction::IsTrivialMove方法来判断当前Comapction任务是否不需要
+     * 合并或删除SSTable，而只需要将SSTable移到下一层。如果可以“trivial
+     * move”，则LevelDB只需要通过VersionEdit来修改Version中记录的每个level
+     * 的文件编号即可，而不需要读写SSTable。
+     */
     // Move file to next level
     assert(c->num_input_files(0) == 1);
     FileMetaData* f = c->input(0, 0);
@@ -943,8 +997,11 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
   }
   return versions_->LogAndApply(compact->compaction->edit(), &mutex_);
 }
-
+// Major Compaction主要通过DBImpl::DoCompactionWork方法实现
 Status DBImpl::DoCompactionWork(CompactionState* compact) {
+  /**
+   * 首先DoCompactionWork通过断言避免编码错误，同时做好日志，这里不再赘述。
+   */
   const uint64_t start_micros = env_->NowMicros();
   int64_t imm_micros = 0;  // Micros spent doing imm_ compactions
 
@@ -963,11 +1020,19 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   }
 
   Iterator* input = versions_->MakeInputIterator(compact->compaction);
+  // 通过MakeInputIterator方法生成了所有参与Major
+  // Compaction的SSTable的全局迭代器Input Iterator
 
   // Release mutex while we're actually doing the compaction work
   mutex_.Unlock();
 
   input->SeekToFirst();
+  /**
+   * 主要通过InputIterator顺序遍历参与Major
+   * Compaction的key/value，对每个key/value的处理会在下文介绍。
+   * 在处理完所有key后，根据状态判断是否需要返回错误
+   * ，同时通过FinishCompactionOutputFile方法关闭最后一个写入的SSTable。
+   */
   Status status;
   ParsedInternalKey ikey;
   std::string current_user_key;
@@ -991,6 +1056,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
     if (compact->compaction->ShouldStopBefore(key) &&
         compact->builder != nullptr) {
       status = FinishCompactionOutputFile(compact, input);
+      // 同时通过FinishCompactionOutputFile方法关闭最后一个写入的SSTable。
       if (!status.ok()) {
         break;
       }
@@ -1028,7 +1094,13 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         // Therefore this deletion marker is obsolete and can be dropped.
         drop = true;
       }
-
+      /**
+       * 判断当前是否丢弃当前key/value：
+      如果当前key的UserKey不是第一次出现，且其SequenceNumber小于保留的最小snapshot
+      number，则丢弃该key/value。
+      如果该key的InternalKey类型为kTypeDeletion、且其SequenceNumber小于需要保留的最小snapshot
+      number，同时更高的level中不存在该key时，可以丢弃该key/value。
+      */
       last_sequence_for_key = ikey.sequence;
     }
 #if 0
@@ -1175,6 +1247,13 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 // 读取
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
+  /**
+   * 当LevelDB查找key时，会记录一些统计信息。当在SSTable上发生查找时，会记录发生seek
+   * miss的
+   * SSTable，这样会更新Version中其相应的FileMetaData中的allowed_seeks字段，
+   * 并通过MaybeScheduleCompaction检查是否需要触发Seek
+   * Compaction。
+   */
   Status s;
   MutexLock l(&mutex_);
   SequenceNumber snapshot;
@@ -1387,6 +1466,22 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
 // REQUIRES: mutex_ is held
 // REQUIRES: this thread is currently at the front of the writer queue
 Status DBImpl::MakeRoomForWrite(bool force) {
+  /**
+   * 通过断言确保当前持有着锁。
+如果后台线程报错，退出执行。
+如果当前level-0中的SSTable数即将超过最大限制（默认为8，而当level-0的SSTable数达到4时即可触发Minor
+Compaction），这可能是写入过快导致的。此时会开启流控，将每条写入都推迟1ms，以给Minor
+Compaction留出时间。如果调用该方法时参数force为true，则不会触发流控。
+如果force为false且MemTable估算的大小没有超过限制（默认为4MB），则直接退出，不需要进行Minor
+Compaction。 如果此时有未完成Minor Compaction的Immutable
+MemTable，此时循环等待Minor Compaction执行完成再执行。
+如果当前level-0层的SSTable数过多（默认为8），此时循环等待level-0层SSTable数低于该上限，
+以避免level-0层SSTable过多
+否则，首先打开新的WAL文件用来记录后续操作，并释放旧的WAL文件。然后将当前的MemTable转为
+Immutable，调用MaybeScheduleCompaction方法尝试通过后台线程调度Compcation执行
+（此时imm_会引用旧的MemTable，以让MaybeScheduleCompaction得知当前需要Minor
+Compaction）。
+  */
   mutex_.AssertHeld();
   assert(!writers_.empty());
   bool allow_delay = !force;

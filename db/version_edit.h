@@ -18,7 +18,10 @@ struct FileMetaData {
   FileMetaData() : refs(0), allowed_seeks(1 << 30), file_size(0) {}
 
   int refs;
-  int allowed_seeks;  // Seeks allowed until compaction
+  // 还能被seek的次数，低于0就要被compact
+  int allowed_seeks; /**
+  当某SSTable的allowed_seeks减为0时，会触发seek
+  compaction，该SSTable会与下层部分SSTable合并。*/
   uint64_t number;
   uint64_t file_size;    // File size in bytes
   InternalKey smallest;  // Smallest internal key served by table

@@ -64,7 +64,6 @@ class Version {
     int seek_file_level;
   };
 
-
   void AddIterators(const ReadOptions&, std::vector<Iterator*>* iters);
 
   // Lookup the value for key.  If found, store it in *val and
@@ -325,6 +324,19 @@ class VersionSet {
 
 // A Compaction encapsulates information about a compaction.
 class Compaction {
+  /**
+   *LevelDB在进行Major Compaction时，至少需要确定以下参数：
+
+确定Compaction起始层级i。
+确定level-i层SSTable input。
+确定level-(i+1)层中与待Compact的SSTable有overlap的SSTable input。
+Major Compation生成的SSTable的level即为level-(i+1)。
+
+由于三种Major
+Compaction的起始条件与目标都不同，其确定这三个参数的方式稍有不同。
+本节笔者将介绍并分析各种Major
+Compaction确定Compaction范围的方法与实现。
+   */
  public:
   ~Compaction();
 
@@ -378,7 +390,11 @@ class Compaction {
 
   // Each compaction reads inputs from "level_" and "level_+1"
   std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
-
+                                          /**
+                                           * level：Major Compaction的起始level（即上述level-i）。
+                                          input[0]：level-i层需要Compact的SSTable编号。
+                                          input[1]：level-(i+1)层需要Compact的SSTable编号。
+                                          */
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
   std::vector<FileMetaData*> grandparents_;

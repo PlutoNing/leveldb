@@ -35,7 +35,9 @@
 #include "util/random.h"
 
 namespace leveldb {
-
+/**
+ * 2024年3月28日15:36:45跳表
+ */
 template <typename Key, class Comparator>
 class SkipList {
  private:
@@ -57,7 +59,7 @@ class SkipList {
   // Returns true iff an entry that compares equal to key is in the list.
   bool Contains(const Key& key) const;
 
-  // Iteration over the contents of a skip list
+  // 跳表的iter
   class Iterator {
    public:
     // Initialize an iterator over the specified list.
@@ -79,7 +81,7 @@ class SkipList {
     // REQUIRES: Valid()
     void Prev();
 
-    // Advance to the first entry with a key >= target
+    // 找到第一个大于tar的key
     void Seek(const Key& target);
 
     // Position at the first entry in list.
@@ -91,12 +93,13 @@ class SkipList {
     void SeekToLast();
 
    private:
-    const SkipList* list_;
-    Node* node_;
+    const SkipList* list_;  // 遍历的跳表
+    Node* node_;            // 当前指向的节点
     // Intentionally copyable
   };
 
  private:
+  // 最大层数
   enum { kMaxHeight = 12 };
 
   inline int GetMaxHeight() const {
@@ -127,15 +130,17 @@ class SkipList {
 
   // Immutable after construction
   Comparator const compare_;
-  Arena* const arena_;  // Arena used for allocations of nodes
+  // 分配节点
+  Arena* const arena_;
 
   Node* const head_;
 
   // Modified only by Insert().  Read racily by readers, but stale
   // values are ok.
+  // 目前的最大高度
   std::atomic<int> max_height_;  // Height of the entire list
 
-  // Read/written only by Insert().
+  // 用于生成随机数
   Random rnd_;
 };
 
@@ -181,6 +186,7 @@ typename SkipList<Key, Comparator>::Node* SkipList<Key, Comparator>::NewNode(
     const Key& key, int height) {
   char* const node_memory = arena_->AllocateAligned(
       sizeof(Node) + sizeof(std::atomic<Node*>) * (height - 1));
+  // placement new
   return new (node_memory) Node(key);
 }
 
@@ -241,6 +247,7 @@ int SkipList<Key, Comparator>::RandomHeight() {
   // Increase height with probability 1 in kBranching
   static const unsigned int kBranching = 4;
   int height = 1;
+  // 在最大高度内以n分之一的概率自增
   while (height < kMaxHeight && rnd_.OneIn(kBranching)) {
     height++;
   }
@@ -263,8 +270,10 @@ SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
   int level = GetMaxHeight() - 1;
   while (true) {
     Node* next = x->Next(level);
+    // 从最大level开始跳
     if (KeyIsAfterNode(key, next)) {
       // Keep searching in this list
+      // 如果key还在后面就继续跳
       x = next;
     } else {
       if (prev != nullptr) prev[level] = x;
@@ -272,6 +281,7 @@ SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
         return next;
       } else {
         // Switch to next list
+        // 如果不在的话就从下一级搜
         level--;
       }
     }
@@ -287,6 +297,7 @@ SkipList<Key, Comparator>::FindLessThan(const Key& key) const {
     assert(x == head_ || compare_(x->key, key) < 0);
     Node* next = x->Next(level);
     if (next == nullptr || compare_(next->key, key) >= 0) {
+      //下一个key大于key了，应该下一级去搜
       if (level == 0) {
         return x;
       } else {

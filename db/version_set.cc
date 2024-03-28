@@ -520,6 +520,19 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
    * 2。如果在level 0or1找到了重合，就返回level 0。否则查找level 2，如果level
    * 2有重合就返回level 1，否则返回level 2。
    */
+  /**在LST-Tree的基本概念中，Minor Compaction只需要将Immutable
+MemTable全量转储为SSTable，并将其推至level-0即可。而LevelDB对这一步骤进行了优化，其会将Minor
+Comapction生成的SSTable推至更高的层级。该优化的依据如下：
+
+由于level 0中SSTable间可能存在overlap，发生在level 0=>1的Major
+Compaction开销相对较大。为了尽可能避免level 0=>1的Major
+Compaction开销并避免一些开销较大的Manifest文件操作，LevelDB会将Minor
+Comapction产生的MemTable尽可能推至更高level。 LevelDB也不会将Minor
+Compaction产生的SSTable的level推得过高。SSTable的level越高越难被
+Compaction，因此如果该SSTable中很多Record是override操作，如果不被Compaction会造成很大的空间浪费。
+该优化不能破坏LSM-Tree结构。
+   *
+   */
   int level = 0;
   if (!OverlapInLevel(0, &smallest_user_key, &largest_user_key)) {
     // Push to next level if there is no overlap in next level,
@@ -550,6 +563,17 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
    * 也就是说在compactmemtable的时候，写入的sstable文件不一定总是在level
    * 0，如果比较顺利，没有重合的，它可能会写到level1或者level2中。
    */
+  /**
+   * PickLevelForMemTableOutput方法最初将目标level置为0，并循环判断是否可以
+   * 将该level推高一层至目标level。其判断条件如下：
+
+目标level不能超过配置config::kMaxMemCompactLevel中限制的最大高度（默认为2）。
+目标level不能与该level的其它SSTable有overlap。
+目标level与其下一层level的overlap不能过多，其计算规则为：首先根据Immutable
+MemTable的key范围找出目标level的下一层level中与其存在overlap的所有文件；
+所有与之存在overlap的文件总大小不能超过LevelDB配置中max_file_size大小的10倍（默认为2MB）。
+如果满足以上所有条件，则将目标level推至下一层并继续循环。
+  */
 }
 
 /**
@@ -1174,6 +1198,9 @@ void VersionSet::MarkFileNumberUsed(uint64_t number) {
  * 0和>0需要分别对待
  * 对于level 0以文件个数计算，kL0_CompactionTrigger默认配置为4
  * 对于level>0，根据level内的文件总大小计算
+ * 调用VersionSet::Finalize方法来计算每层SSTable是否需要Size
+ * Compaction，并选出最需要进行Size Compaction的层作为下次Size
+ * Compaction的目标。
  */
 void VersionSet::Finalize(Version* v) {
   // Precomputed best level for next compaction
@@ -1211,6 +1238,13 @@ void VersionSet::Finalize(Version* v) {
 
   v->compaction_level_ = best_level;
   v->compaction_score_ = best_score;
+  /**
+   * 计算完score后，需要等待Size Compaction的触发。Size
+   * Compaction的触发发生在后台线程调用的DBImpl::BackgroundCall方法中。
+   * 该方法在完成Compaction操作后，会再次调用MaybeScheduleCompaction方法，
+   * 来触发因上次Compaction而需要的Size
+   * Compaction操作。
+   */
 }
 /**
  * 把currentversion保存到*log中，信息包括comparator名字、
@@ -1228,7 +1262,7 @@ Status VersionSet::WriteSnapshot(log::Writer* log) {
     if (!compact_pointer_[level].empty()) {
       InternalKey key;
       key.DecodeFrom(compact_pointer_[level]);
-      //把level和key加入compact点
+      // 把level和key加入compact点
       edit.SetCompactPointer(level, key);
     }
   }
@@ -1238,7 +1272,7 @@ Status VersionSet::WriteSnapshot(log::Writer* log) {
     const std::vector<FileMetaData*>& files = current_->files_[level];
     for (size_t i = 0; i < files.size(); i++) {
       const FileMetaData* f = files[i];
-      //把文件添加到新文件集合
+      // 把文件添加到新文件集合
       edit.AddFile(level, f->number, f->file_size, f->smallest, f->largest);
     }
   }
@@ -1402,7 +1436,12 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c) {
   delete[] list;
   return result;
 }
-
+/**
+ *LevelDB在触发Size Compaction时，已知Compaction的起始层级i；
+ 而LevelDB在触发Seek
+ *Compaction时，已知Compaction的起始层级i和level-i层的输入SSTable。
+ LevelDB通过VersionSet::PickCompaction方法来计算其它参数：
+ */
 Compaction* VersionSet::PickCompaction() {
   Compaction* c;
   int level;
@@ -1651,6 +1690,13 @@ Compaction::~Compaction() {
 }
 
 bool Compaction::IsTrivialMove() const {
+  /**
+   * 如果input[0]只有1个SSTable，input[1]中没有SSTable才可以“trivial
+move”，因为此时不需要合并多个SSTable。
+检查level-(i+2)层中与将移动到level-(i+1)层的SSTable有overlap
+的文件总大小，不能超过一定上限（默认为10倍max_file_size，即20MB）。否则，该trivial
+move的SSTable下一次参与Major Compaction时其合并开销会非常大。
+  */
   const VersionSet* vset = input_version_->vset_;
   // Avoid a move if there is lots of overlapping grandparent data.
   // Otherwise, the move could create a parent file that will require

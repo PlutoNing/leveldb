@@ -46,10 +46,12 @@ class Random {
   }
   // Returns a uniformly distributed value in the range [0..n-1]
   // REQUIRES: n > 0
+  // 产一个0到n的随机数
   uint32_t Uniform(int n) { return Next() % n; }
 
   // Randomly returns true ~"1/n" of the time, and false otherwise.
   // REQUIRES: n > 0
+  //以n分子一的概率返回真
   bool OneIn(int n) { return (Next() % n) == 0; }
 
   // Skewed: pick "base" uniformly from range [0,max_log] and then
