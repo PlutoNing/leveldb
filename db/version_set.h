@@ -148,7 +148,7 @@ class Version {
   VersionSet* vset_;  // VersionSet to which this Version belongs
   Version* next_;     // Next version in linked list
   Version* prev_;     // Previous version in linked list
-  int refs_;          // Number of live refs to this version
+  int refs_;          // 此version的引用
 
   // sstable文件列表
   std::vector<FileMetaData*> files_[config::kNumLevels];
@@ -166,7 +166,8 @@ class Version {
   int compaction_level_;
 };
 /**
- * 除了通过Version管理所有的sstable文件外，还关心manifest文件信息，以及控制log文件等编号
+ * 除了通过Version管理所有的sstable文件外，
+ * 还关心manifest文件信息，以及控制log文件等编号
  */
 class VersionSet {
  public:
@@ -322,7 +323,7 @@ class VersionSet {
   std::string compact_pointer_[config::kNumLevels];
 };
 
-// A Compaction encapsulates information about a compaction.
+// 记录者关于compact的信息
 class Compaction {
   /**
    *LevelDB在进行Major Compaction时，至少需要确定以下参数：

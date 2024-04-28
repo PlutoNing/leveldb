@@ -690,7 +690,7 @@ class VersionSet::Builder {
 
   VersionSet* vset_;
   Version* base_;
-  LevelState levels_[config::kNumLevels];
+  LevelState levels_[config::kNumLevels];//存着每个level添加和删除的文件列表
 
  public:
   // Initialize a builder with the files from *base and other info from *vset
@@ -702,7 +702,9 @@ class VersionSet::Builder {
       levels_[level].added_files = new FileSet(cmp);
     }
   }
-
+/**
+ * 清理levels里面添加的，仅有自己引用的文件。
+*/
   ~Builder() {
     for (int level = 0; level < config::kNumLevels; level++) {
       const FileSet* added = levels_[level].added_files;
@@ -1688,7 +1690,7 @@ Compaction::~Compaction() {
     input_version_->Unref();
   }
 }
-
+//判断i，i+1，i+2层待compact文件数量是否满足一点关系
 bool Compaction::IsTrivialMove() const {
   /**
    * 如果input[0]只有1个SSTable，input[1]中没有SSTable才可以“trivial
@@ -1705,10 +1707,12 @@ move的SSTable下一次参与Major Compaction时其合并开销会非常大。
           TotalFileSize(grandparents_) <=
               MaxGrandParentOverlapBytes(vset->options_));
 }
-
-void Compaction::AddInputDeletions(VersionEdit* edit) {
+// 在edit添加此次删除的文件信息 
+void Compaction::AddInputDeletions(
+    VersionEdit* edit) {
   for (int which = 0; which < 2; which++) {
     for (size_t i = 0; i < inputs_[which].size(); i++) {
+      //在edit添加此次删除的文件信息
       edit->RemoveFile(level_ + which, inputs_[which][i]->number);
     }
   }

@@ -18,13 +18,7 @@ int main(void) {
   string key = "name";
   string value = "shane";
 
-  cout << "write:"
-          "("
-       << key
-       << ")"
-          "=>"
-          "("
-       << value << ")" << endl;
+
   // write
   status = db->Put(leveldb::WriteOptions(), key, value);
   assert(status.ok());
@@ -33,13 +27,7 @@ int main(void) {
   status = db->Get(leveldb::ReadOptions(), key, &value);
   assert(status.ok());
 
-  cout << "read:"
-          "("
-       << key
-       << ")"
-          "=>"
-          "("
-       << value << ")" << endl;
+
 
   // delete
   status = db->Delete(leveldb::WriteOptions(), key);

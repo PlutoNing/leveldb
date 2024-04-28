@@ -609,10 +609,13 @@ void DBImpl::CompactMemTable() {
   /**
    * CompactionMemTable方法首先调用DBImpl::WriteLevel0Table方法将Immutable
    * MemTable转储为SSTable，由于该方法需要使用当前的Version信息，因此在调用
-   * 前后增减了当前Version的引用计数以避免其被回收。接着，通过VersionSet::LogAndApply
+   * 前后增减了当前Version的引用计数以避免其被回收。接着，
+   * //时时刻刻做log
+   * 通过VersionSet::LogAndApply
    * 方法将增量的版本更新VersionEdit写入Manifest（其中prev
    * log
-   * number已被弃用，不需要再关注）。如果上述操作都成功完成，则可以释放对Immutable
+   * number已被弃用，不需要再关注）。
+   * 如果上述操作都成功完成，则可以释放对Immutable
    * MemTable的引用，并通过RemoveObsoleteFiles方法回收不再需要保留的文件。
    */
   mutex_.AssertHeld();
@@ -622,6 +625,7 @@ void DBImpl::CompactMemTable() {
   VersionEdit edit;
   Version* base = versions_->current();
   base->Ref();
+  //会把此次新的file添加到edit里面
   Status s = WriteLevel0Table(imm_, &edit, base);
   base->Unref();
 
@@ -796,6 +800,7 @@ void DBImpl::BackgroundCompaction() {
    * Comapction并返回。
    */
   if (imm_ != nullptr) {
+    //1.首先写imm
     CompactMemTable();
     return;
   }

@@ -17,15 +17,15 @@ class VersionSet;
 struct FileMetaData {
   FileMetaData() : refs(0), allowed_seeks(1 << 30), file_size(0) {}
 
-  int refs;
-  // 还能被seek的次数，低于0就要被compact
+  int refs;  // 还能被seek的次数，低于0就要被compact
+
   int allowed_seeks; /**
   当某SSTable的allowed_seeks减为0时，会触发seek
   compaction，该SSTable会与下层部分SSTable合并。*/
-  uint64_t number;
+  uint64_t number; //文件id
   uint64_t file_size;    // File size in bytes
-  InternalKey smallest;  // Smallest internal key served by table
-  InternalKey largest;   // Largest internal key served by table
+  InternalKey smallest;  // 最小key
+  InternalKey largest;   // 最大key
 };
 /**
  * 1 当版本间有增量变动时，VersionEdit记录了这种变动； 2
